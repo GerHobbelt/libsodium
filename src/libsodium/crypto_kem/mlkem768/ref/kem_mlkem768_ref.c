@@ -1,9 +1,8 @@
 #include <stdint.h>
 #include <string.h>
 
-#include "crypto_core_keccak1600.h"
+#include "crypto_hash_sha3.h"
 #include "crypto_kem_mlkem768.h"
-#include "crypto_verify_32.h"
 #include "crypto_xof_shake128.h"
 #include "crypto_xof_shake256.h"
 #include "kem_mlkem768_ref.h"
@@ -24,9 +23,6 @@
 #define MLKEM768_POLYCOMPRESSEDBYTES_DU    320
 #define MLKEM768_POLYCOMPRESSEDBYTES_DV    128
 #define MLKEM768_POLYVECCOMPRESSEDBYTES_DU (MLKEM768_K * MLKEM768_POLYCOMPRESSEDBYTES_DU)
-
-#define SHA3_512_RATE 72
-#define SHA3_DOMAIN   0x06
 
 typedef struct poly {
     int16_t coeffs[MLKEM768_N];
@@ -202,58 +198,6 @@ poly_csubq(poly *r)
 }
 
 static void
-sha3_256(unsigned char out[32], const unsigned char *in, size_t inlen)
-{
-    crypto_xof_shake256_state state;
-
-    crypto_xof_shake256_init_with_domain(&state, SHA3_DOMAIN);
-    crypto_xof_shake256_update(&state, in, inlen);
-    crypto_xof_shake256_squeeze(&state, out, 32);
-}
-
-static void
-sha3_512(unsigned char out[64], const unsigned char *in, size_t inlen)
-{
-    crypto_core_keccak1600_state state;
-    size_t                       offset   = 0;
-    size_t                       consumed = 0;
-    size_t                       chunk_size;
-    unsigned char                pad;
-
-    crypto_core_keccak1600_init(&state);
-
-    while (consumed < inlen) {
-        if (offset == SHA3_512_RATE) {
-            crypto_core_keccak1600_permute_24(&state);
-            offset = 0;
-        }
-        chunk_size = SHA3_512_RATE - offset;
-        if (chunk_size > inlen - consumed) {
-            chunk_size = inlen - consumed;
-        }
-        crypto_core_keccak1600_xor_bytes(&state, &in[consumed], offset, chunk_size);
-        offset += chunk_size;
-        consumed += chunk_size;
-    }
-    if (offset == SHA3_512_RATE) {
-        crypto_core_keccak1600_permute_24(&state);
-        offset = 0;
-    }
-    if (offset == SHA3_512_RATE - 1) {
-        pad = SHA3_DOMAIN | 0x80;
-        crypto_core_keccak1600_xor_bytes(&state, &pad, offset, 1);
-    } else {
-        pad = SHA3_DOMAIN;
-        crypto_core_keccak1600_xor_bytes(&state, &pad, offset, 1);
-        pad = 0x80;
-        crypto_core_keccak1600_xor_bytes(&state, &pad, SHA3_512_RATE - 1, 1);
-    }
-
-    crypto_core_keccak1600_permute_24(&state);
-    crypto_core_keccak1600_extract_bytes(&state, out, 0, 64);
-}
-
-static void
 poly_cbd_eta2(poly *r, const unsigned char buf[128])
 {
     unsigned int i, j;
@@ -290,6 +234,8 @@ poly_getnoise_eta2(poly *r, const unsigned char seed[32], uint8_t nonce)
     crypto_xof_shake256_squeeze(&state, buf, sizeof(buf));
 
     poly_cbd_eta2(r, buf);
+    sodium_memzero(&state, sizeof state);
+    sodium_memzero(buf, sizeof buf);
 }
 
 static void
@@ -620,7 +566,7 @@ indcpa_keypair(unsigned char       pk[crypto_kem_mlkem768_PUBLICKEYBYTES],
     unsigned int   i;
     uint8_t        nonce = 0;
 
-    sha3_512(buf, seed, 33);
+    crypto_hash_sha3512(buf, seed, 33);
 
     gen_matrix(a, publicseed, 0);
 
@@ -648,6 +594,9 @@ indcpa_keypair(unsigned char       pk[crypto_kem_mlkem768_PUBLICKEYBYTES],
     polyvec_tobytes(sk, &skpv);
     polyvec_tobytes(pk, &pkpv);
     memcpy(pk + MLKEM768_POLYVECBYTES, publicseed, 32);
+    sodium_memzero(buf, sizeof buf);
+    sodium_memzero(&skpv, sizeof skpv);
+    sodium_memzero(&e, sizeof e);
 }
 
 static void
@@ -701,6 +650,10 @@ indcpa_enc(unsigned char       ct[crypto_kem_mlkem768_CIPHERTEXTBYTES],
 
     polyvec_compress(ct, &b);
     poly_compress_dv(ct + MLKEM768_POLYVECCOMPRESSEDBYTES_DU, &v);
+    sodium_memzero(&sp, sizeof sp);
+    sodium_memzero(&ep, sizeof ep);
+    sodium_memzero(&epp, sizeof epp);
+    sodium_memzero(&k, sizeof k);
 }
 
 static void
@@ -726,6 +679,8 @@ indcpa_dec(unsigned char       m[32],
     poly_csubq(&mp);
 
     poly_tomsg(m, &mp);
+    sodium_memzero(&skpv, sizeof skpv);
+    sodium_memzero(&mp, sizeof mp);
 }
 
 static void
@@ -754,9 +709,10 @@ mlkem768_ref_seed_keypair(unsigned char *pk, unsigned char *sk, const unsigned c
     indseed[32] = MLKEM768_K;
 
     indcpa_keypair(pk, sk, indseed);
+    sodium_memzero(indseed, sizeof indseed);
     memcpy(sk + MLKEM768_POLYVECBYTES, pk, crypto_kem_mlkem768_PUBLICKEYBYTES);
-    sha3_256(sk + MLKEM768_POLYVECBYTES + crypto_kem_mlkem768_PUBLICKEYBYTES, pk,
-             crypto_kem_mlkem768_PUBLICKEYBYTES);
+    crypto_hash_sha3256(sk + MLKEM768_POLYVECBYTES + crypto_kem_mlkem768_PUBLICKEYBYTES, pk,
+                        crypto_kem_mlkem768_PUBLICKEYBYTES);
     memcpy(sk + MLKEM768_POLYVECBYTES + crypto_kem_mlkem768_PUBLICKEYBYTES + 32, seed + 32, 32);
 
     return 0;
@@ -785,13 +741,15 @@ mlkem768_ref_enc_deterministic(unsigned char *ct, unsigned char *ss, const unsig
     }
 
     memcpy(buf, seed, 32);
-    sha3_256(buf + 32, pk, crypto_kem_mlkem768_PUBLICKEYBYTES);
+    crypto_hash_sha3256(buf + 32, pk, crypto_kem_mlkem768_PUBLICKEYBYTES);
 
-    sha3_512(kr, buf, 64);
+    crypto_hash_sha3512(kr, buf, 64);
 
     indcpa_enc(ct, buf, pk, kr + 32);
 
     memcpy(ss, kr, crypto_kem_mlkem768_SHAREDSECRETBYTES);
+    sodium_memzero(buf, sizeof buf);
+    sodium_memzero(kr, sizeof kr);
 
     return 0;
 }
@@ -816,59 +774,34 @@ mlkem768_ref_dec(unsigned char *ss, const unsigned char *ct, const unsigned char
     const unsigned char *hpk = sk + MLKEM768_POLYVECBYTES + crypto_kem_mlkem768_PUBLICKEYBYTES;
     const unsigned char *z   = sk + MLKEM768_POLYVECBYTES + crypto_kem_mlkem768_PUBLICKEYBYTES + 32;
     int                  fail;
+    unsigned int         fail_mask;
     crypto_xof_shake256_state state;
 
     indcpa_dec(buf, ct, sk);
 
     memcpy(buf + 32, hpk, 32);
 
-    sha3_512(kr, buf, 64);
+    crypto_hash_sha3512(kr, buf, 64);
 
     indcpa_enc(cmp, buf, pk, kr + 32);
 
-    fail = crypto_verify_32(ct, cmp);
-    fail |= crypto_verify_32(ct + 32, cmp + 32);
-    fail |= crypto_verify_32(ct + 64, cmp + 64);
-    fail |= crypto_verify_32(ct + 96, cmp + 96);
-    fail |= crypto_verify_32(ct + 128, cmp + 128);
-    fail |= crypto_verify_32(ct + 160, cmp + 160);
-    fail |= crypto_verify_32(ct + 192, cmp + 192);
-    fail |= crypto_verify_32(ct + 224, cmp + 224);
-    fail |= crypto_verify_32(ct + 256, cmp + 256);
-    fail |= crypto_verify_32(ct + 288, cmp + 288);
-    fail |= crypto_verify_32(ct + 320, cmp + 320);
-    fail |= crypto_verify_32(ct + 352, cmp + 352);
-    fail |= crypto_verify_32(ct + 384, cmp + 384);
-    fail |= crypto_verify_32(ct + 416, cmp + 416);
-    fail |= crypto_verify_32(ct + 448, cmp + 448);
-    fail |= crypto_verify_32(ct + 480, cmp + 480);
-    fail |= crypto_verify_32(ct + 512, cmp + 512);
-    fail |= crypto_verify_32(ct + 544, cmp + 544);
-    fail |= crypto_verify_32(ct + 576, cmp + 576);
-    fail |= crypto_verify_32(ct + 608, cmp + 608);
-    fail |= crypto_verify_32(ct + 640, cmp + 640);
-    fail |= crypto_verify_32(ct + 672, cmp + 672);
-    fail |= crypto_verify_32(ct + 704, cmp + 704);
-    fail |= crypto_verify_32(ct + 736, cmp + 736);
-    fail |= crypto_verify_32(ct + 768, cmp + 768);
-    fail |= crypto_verify_32(ct + 800, cmp + 800);
-    fail |= crypto_verify_32(ct + 832, cmp + 832);
-    fail |= crypto_verify_32(ct + 864, cmp + 864);
-    fail |= crypto_verify_32(ct + 896, cmp + 896);
-    fail |= crypto_verify_32(ct + 928, cmp + 928);
-    fail |= crypto_verify_32(ct + 960, cmp + 960);
-    fail |= crypto_verify_32(ct + 992, cmp + 992);
-    fail |= crypto_verify_32(ct + 1024, cmp + 1024);
-    fail |= crypto_verify_32(ct + 1056, cmp + 1056);
+    fail = sodium_memcmp(ct, cmp, crypto_kem_mlkem768_CIPHERTEXTBYTES);
+    fail_mask = (unsigned int) fail;
+    fail_mask >>= (sizeof(fail_mask) * 8U - 1U);
 
     crypto_xof_shake256_init(&state);
     crypto_xof_shake256_update(&state, z, 32);
     crypto_xof_shake256_update(&state, ct, crypto_kem_mlkem768_CIPHERTEXTBYTES);
     crypto_xof_shake256_squeeze(&state, k_bar, crypto_kem_mlkem768_SHAREDSECRETBYTES);
 
-    cmov(kr, k_bar, crypto_kem_mlkem768_SHAREDSECRETBYTES, (unsigned char) (fail != 0));
+    cmov(kr, k_bar, crypto_kem_mlkem768_SHAREDSECRETBYTES, (unsigned char) fail_mask);
 
     memcpy(ss, kr, crypto_kem_mlkem768_SHAREDSECRETBYTES);
+    sodium_memzero(buf, sizeof buf);
+    sodium_memzero(kr, sizeof kr);
+    sodium_memzero(k_bar, sizeof k_bar);
+    sodium_memzero(cmp, sizeof cmp);
+    sodium_memzero(&state, sizeof state);
 
     return 0;
 }
