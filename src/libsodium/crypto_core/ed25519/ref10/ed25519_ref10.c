@@ -39,7 +39,7 @@ load_4(const unsigned char *in)
  * and 10*25.5 bit limbs elsewhere.
  *
  * Functions used elsewhere that are candidates for inlining are defined
- * via "private/curve25519_ref10.h".
+ * via "private/ed25519_ref10.h".
  */
 
 #ifdef HAVE_TI_MODE
@@ -62,7 +62,7 @@ fe25519_sqmul(fe25519 s, const int n, const fe25519 a)
 }
 
 /*
- * Inversion - returns 0 if z=0
+ * Inversion - sets out to 0 if z=0
  */
 void
 fe25519_invert(fe25519 out, const fe25519 z)
@@ -1141,10 +1141,13 @@ int
 ge25519_is_on_main_subgroup(const ge25519_p3 *p)
 {
     ge25519_p3 pl;
+    fe25519    t;
 
     ge25519_mul_l(&pl, p);
 
-    return fe25519_iszero(pl.X);
+    fe25519_sub(t, pl.Y, pl.Z);
+
+    return fe25519_iszero(pl.X) & fe25519_iszero(t);
 }
 
 int
