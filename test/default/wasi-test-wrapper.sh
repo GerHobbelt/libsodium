@@ -19,7 +19,7 @@ fi
 
 if [ -z "$WASI_RUNTIME" ] || [ "$WASI_RUNTIME" = "wasmer" ]; then
   if command -v wasmer >/dev/null; then
-    wasmer run "$1" "--${WASMER_BACKEND:-cranelift}" --mapdir=./:. && exit 0
+    wasmer run "$1" "--${WASMER_BACKEND:-cranelift}" --volume=./:. && exit 0
   fi
 fi
 
@@ -86,6 +86,12 @@ fi
 if [ -z "$WASI_RUNTIME" ] || [ "$WASI_RUNTIME" = "wazero" ]; then
   if command -v wazero >/dev/null; then
     wazero run -mount .:/ "$1" && exit 0
+  fi
+fi
+
+if [ -z "$WASI_RUNTIME" ] || [ "$WASI_RUNTIME" = "zwasm" ]; then
+  if command -v zwasm >/dev/null; then
+    zwasm run --dir "$(pwd)::/" --allow-read --allow-write --allow-path "$1" && exit 0
   fi
 fi
 
