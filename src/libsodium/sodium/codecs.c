@@ -125,8 +125,9 @@ b64_byte_to_char(unsigned int x)
 }
 
 static unsigned int
-b64_char_to_byte(int c)
+b64_char_to_byte(int c_)
 {
+    const unsigned int c = (unsigned char) c_;
     const unsigned int x =
         (GE(c, 'A') & LE(c, 'Z') & (c - 'A')) |
         (GE(c, 'a') & LE(c, 'z') & (c - ('a' - 26))) |
@@ -146,8 +147,9 @@ b64_byte_to_urlsafe_char(unsigned int x)
 }
 
 static unsigned int
-b64_urlsafe_char_to_byte(int c)
+b64_urlsafe_char_to_byte(int c_)
 {
+    const unsigned int c = (unsigned char) c_;
     const unsigned x =
         (GE(c, 'A') & LE(c, 'Z') & (c - 'A')) |
         (GE(c, 'a') & LE(c, 'z') & (c - ('a' - 26))) |
@@ -474,9 +476,10 @@ parse_ipv6(const char *src, const char *end, unsigned char out[16])
 }
 
 int
-sodium_ip2bin(unsigned char bin[16], const char *ip, size_t ip_len)
+sodium_ip2bin(unsigned char bin[16], const char *ip,
+              size_t ip_len_) /* Some AIX versions define a macro named "ip_len" */
 {
-    const char   *ip_end = ip + ip_len;
+    const char   *ip_end = ip + ip_len_;
     const char   *end;
     const char   *z;
     unsigned char v4[4];

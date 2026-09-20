@@ -77,7 +77,7 @@ int sodium_hex2bin(unsigned char *const bin, const size_t bin_maxlen, const char
 #define sodium_base64_ENCODED_LEN(BIN_LEN, VARIANT)                                              \
     (((BIN_LEN) / 3U) * 4U +                                                                     \
      ((((BIN_LEN) - ((BIN_LEN) / 3U) * 3U) | (((BIN_LEN) - ((BIN_LEN) / 3U) * 3U) >> 1)) & 1U) * \
-         (4U - (~((((VARIANT) & 2U) >> 1) - 1U) & (3U - ((BIN_LEN) - ((BIN_LEN) / 3U) * 3U)))) + \
+         (4U - ((0U - (((VARIANT) & 2U) >> 1)) & (3U - ((BIN_LEN) - ((BIN_LEN) / 3U) * 3U)))) + \
      1U)
 
 SODIUM_EXPORT
@@ -93,7 +93,7 @@ int sodium_base642bin(unsigned char *const bin, const size_t bin_maxlen, const c
                       const char **const b64_end, const int variant) __attribute__((nonnull(1)));
 
 SODIUM_EXPORT
-int sodium_ip2bin(unsigned char bin[16], const char *ip, size_t ip_len)
+int sodium_ip2bin(unsigned char bin[16], const char *ip, size_t ip_len_)
     __attribute__((warn_unused_result)) __attribute__((nonnull));
 
 SODIUM_EXPORT
